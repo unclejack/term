@@ -51,6 +51,7 @@ func main() {
 			logger.Fatal("no path specified for recording")
 		}
 		if context.GlobalBool("play") {
+			fmt.Println("starting playback of recoding!\n")
 			if err := playbackTerm(path); err != nil {
 				logger.Fatal(err)
 			}
