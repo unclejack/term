@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/codegangsta/cli"
@@ -39,6 +41,38 @@ func forwardSignals(s chan os.Signal, cmd *exec.Cmd, master *os.File) {
 	}
 }
 
+type recoding struct {
+	Timestamp time.Time `json:"timestamp"`
+	Content   []byte    `json:"content"`
+}
+
+func newRecorder(f io.WriteCloser) io.WriteCloser {
+	return &recorder{
+		output:  f,
+		encoder: json.NewEncoder(f),
+	}
+}
+
+type recorder struct {
+	output  io.WriteCloser
+	encoder *json.Encoder
+}
+
+func (r *recorder) Write(p []byte) (int, error) {
+	c := recoding{
+		Timestamp: time.Now(),
+		Content:   p,
+	}
+	if err := r.encoder.Encode(c); err != nil {
+		return -1, err
+	}
+	return len(p), nil
+}
+
+func (r *recorder) Close() error {
+	return r.output.Close()
+}
+
 func recordTerm() error {
 	master, slave, err := pty.Open()
 	if err != nil {
@@ -53,9 +87,14 @@ func recordTerm() error {
 		//master.Close()
 		term.RestoreTerminal(os.Stdin.Fd(), state)
 	}()
+	f, err := os.Create("test-rec")
+	if err != nil {
+		return err
+	}
+	r := newRecorder(f)
+	defer r.Close()
 	s := make(chan os.Signal, 32)
 	signal.Notify(s)
-
 	cmd := exec.Command(os.Getenv("SHELL"))
 	cmd.Env = append(os.Environ(), "RECORDING=true")
 	cmd.Stdin = slave
@@ -64,15 +103,40 @@ func recordTerm() error {
 	setTermSize(master)
 	go forwardSignals(s, cmd, master)
 	go io.Copy(master, os.Stdin)
-	go io.Copy(os.Stdout, master)
+	go io.Copy(io.MultiWriter(os.Stdout, r), master)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 	if err := cmd.Wait(); err != nil {
 		return err
 	}
-	close(s)
 	return nil
+}
+
+func playbackTerm() error {
+	f, err := os.Open("test-rec")
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	dec := json.NewDecoder(f)
+
+	var prev *recoding
+	for {
+		var c *recoding
+		if err := dec.Decode(&c); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		if prev != nil {
+			d := c.Timestamp.Sub(prev.Timestamp)
+			time.Sleep(d)
+		}
+		os.Stdout.Write(c.Content)
+		prev = c
+	}
 }
 
 func main() {
@@ -80,7 +144,16 @@ func main() {
 	app.Name = "rec"
 	app.Version = "1"
 	app.Author = "@crosbymichael"
+	app.Flags = []cli.Flag{
+		cli.BoolFlag{Name: "play", Usage: "playback the recording in your term"},
+	}
 	app.Action = func(context *cli.Context) {
+		if context.GlobalBool("play") {
+			if err := playbackTerm(); err != nil {
+				logger.Fatal(err)
+			}
+			return
+		}
 		if err := recordTerm(); err != nil {
 			logger.Fatal(err)
 		}
