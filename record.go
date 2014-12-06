@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/docker/docker/pkg/term"
@@ -67,6 +68,9 @@ func recordTerm(path string) error {
 	s := make(chan os.Signal, 32)
 	signal.Notify(s)
 	cmd := exec.Command(os.Getenv("SHELL"))
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true,
+	}
 	cmd.Env = append(os.Environ(), "RECORDING=true")
 	cmd.Stdin = slave
 	cmd.Stdout = slave
