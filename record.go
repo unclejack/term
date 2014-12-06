@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -46,6 +47,9 @@ func (r *recorder) Close() error {
 }
 
 func recordTerm(path string) error {
+	if os.Getenv("RECORDING") == "true" {
+		return fmt.Errorf("cannot start a recording inside a recording, too much inception...")
+	}
 	master, slave, err := pty.Open()
 	if err != nil {
 		return err
@@ -55,8 +59,7 @@ func recordTerm(path string) error {
 		return err
 	}
 	defer func() {
-		//slave.Close()
-		//master.Close()
+		master.Close()
 		term.RestoreTerminal(os.Stdin.Fd(), state)
 	}()
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
