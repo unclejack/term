@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -73,7 +75,7 @@ func (r *recorder) Close() error {
 	return r.output.Close()
 }
 
-func recordTerm() error {
+func recordTerm(path string) error {
 	master, slave, err := pty.Open()
 	if err != nil {
 		return err
@@ -87,7 +89,7 @@ func recordTerm() error {
 		//master.Close()
 		term.RestoreTerminal(os.Stdin.Fd(), state)
 	}()
-	f, err := os.Create("test-rec")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 	if err != nil {
 		return err
 	}
@@ -113,14 +115,21 @@ func recordTerm() error {
 	return nil
 }
 
-func playbackTerm() error {
-	f, err := os.Open("test-rec")
+func playbackTerm(path string) error {
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	dec := json.NewDecoder(f)
 
+	playbacks := make(chan *playback, 64)
+	wg := &sync.WaitGroup{}
+	defer func() {
+		close(playbacks)
+		wg.Wait()
+	}()
+	go playbackWriter(playbacks, wg)
 	var prev *recoding
 	for {
 		var c *recoding
@@ -130,12 +139,29 @@ func playbackTerm() error {
 			}
 			return err
 		}
+		var d time.Duration
 		if prev != nil {
-			d := c.Timestamp.Sub(prev.Timestamp)
-			time.Sleep(d)
+			d = c.Timestamp.Sub(prev.Timestamp)
 		}
-		os.Stdout.Write(c.Content)
+		playbacks <- &playback{
+			Pause:   d,
+			Content: c.Content,
+		}
 		prev = c
+	}
+}
+
+type playback struct {
+	Pause   time.Duration
+	Content []byte
+}
+
+func playbackWriter(c chan *playback, wg *sync.WaitGroup) {
+	wg.Add(1)
+	defer wg.Done()
+	for p := range c {
+		time.Sleep(p.Pause)
+		os.Stdout.Write(p.Content)
 	}
 }
 
@@ -148,13 +174,18 @@ func main() {
 		cli.BoolFlag{Name: "play", Usage: "playback the recording in your term"},
 	}
 	app.Action = func(context *cli.Context) {
+		path := context.Args().First()
+		if path == "" {
+			logger.Fatal("no path specified for recording")
+		}
 		if context.GlobalBool("play") {
-			if err := playbackTerm(); err != nil {
+			if err := playbackTerm(path); err != nil {
 				logger.Fatal(err)
 			}
+			fmt.Println("recoding complete!")
 			return
 		}
-		if err := recordTerm(); err != nil {
+		if err := recordTerm(path); err != nil {
 			logger.Fatal(err)
 		}
 	}
