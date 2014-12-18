@@ -26,7 +26,6 @@ func recordAction(context *cli.Context) {
 	if err := recordTerm(path); err != nil {
 		logger.Fatal(err)
 	}
-	fmt.Printf("\nrecording saved to %s!\n", path)
 }
 
 type recoding struct {
@@ -101,7 +100,11 @@ func recordTerm(path string) error {
 		return err
 	}
 	if err := cmd.Wait(); err != nil {
-		return err
+		// only return an error if it's not an exit error from
+		// the user's process
+		if _, ok := err.(*exec.ExitError); !ok {
+			return err
+		}
 	}
 	return nil
 }

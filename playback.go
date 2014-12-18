@@ -38,7 +38,6 @@ func getTermStream(path string) (io.ReadCloser, error) {
 		}
 		return resp.Body, nil
 	}
-	logger.Debugf("opening file")
 	return os.Open(path)
 }
 
