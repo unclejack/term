@@ -10,9 +10,24 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/codegangsta/cli"
 	"github.com/docker/docker/pkg/term"
 	"github.com/kr/pty"
 )
+
+func recordAction(context *cli.Context) {
+	if os.Getenv("RECORDING") == "true" {
+		logger.Fatal("you are already in a recording session")
+	}
+	path := context.Args().First()
+	if path == "" {
+		logger.Fatal("no path specified for recording")
+	}
+	if err := recordTerm(path); err != nil {
+		logger.Fatal(err)
+	}
+	fmt.Printf("\nrecording saved to %s!\n", path)
+}
 
 type recoding struct {
 	Timestamp time.Time `json:"timestamp"`
@@ -62,7 +77,7 @@ func recordTerm(path string) error {
 		master.Close()
 		term.RestoreTerminal(os.Stdin.Fd(), state)
 	}()
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
 		return err
 	}
